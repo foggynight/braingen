@@ -38,7 +38,7 @@
 (define-constant INIT-MAX-GENE-LEN 20)       ; Max size of the genes in the initial population.
 (define PARENT-COUNT (// POPULATION-SIZE 2)) ; Number of parents selected each generation.
 (define CHILD-COUNT PARENT-COUNT)            ; Number of children spawned each generation.
-(define-constant MAX-GENERATIONS 100)        ; Maximum number of generations, -1 for infinite.
+(define-constant MAX-GENERATIONS -1)         ; Maximum number of generations, -1 for infinite.
 
 ;; Brainfuck programs are written to/read from this file.
 (define-constant TEMP-FILE-PATH "/tmp/braingen.bf")
@@ -158,7 +158,13 @@
   (vector-for-each (lambda (i p) (score-program! p data)) pop))
 
 (define (sort-population! pop)
-  (sort! pop (lambda (p1 p2) (> (program-score p1) (program-score p2)))))
+  (sort! pop (lambda (p1 p2)
+               (let ((s1 (program-score p1))
+                     (s2 (program-score p2)))
+                 (or (> s1 s2)
+                     (and (= s1 s2)
+                          (< (string-length (program-genes p1))
+                             (string-length (program-genes p2)))))))))
 
 ;; Select `cnt` parents from `pop` using Roulette Wheel Selection.
 (define (select-parents/roulette pop cnt)
