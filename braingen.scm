@@ -34,7 +34,7 @@
                    #f)))
       (close-input-port ip)
       (close-output-port op)
-      (close-output-port ep)
+      (close-input-port ep)
       out)))
 
 ;; data ------------------------------------------------------------------------
