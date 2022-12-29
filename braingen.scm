@@ -9,15 +9,16 @@
 ;; misc ------------------------------------------------------------------------
 
 (define (1+ n) (+ n 1))
+(define (2+ n) (+ n 2))
 (define (2* n) (* n 2))
 (define // (compose inexact->exact floor /))
 
 ;; config ----------------------------------------------------------------------
 
 (define-constant POPULATION-SIZE 4)          ; Size of the population, remains constant.
-(define-constant INIT-MAX-GENE-LEN 8)        ; Max size of the genes in the initial population.
+(define-constant INIT-MAX-GENE-LEN 20)       ; Max size of the genes in the initial population.
 (define PARENT-COUNT (// POPULATION-SIZE 2)) ; Number of parents selected each generation.
-(define CHILD-COUNT (// PARENT-COUNT 2))     ; Number of children spawned each generation.
+(define CHILD-COUNT PARENT-COUNT)            ; Number of children spawned each generation.
 (define-constant MAX-GENERATIONS 100)        ; Maximum number of generations, -1 for infinite.
 
 ;; Brainfuck programs are written to/read from this file.
@@ -93,13 +94,17 @@
           (loop (cdr ds))))))
   (program-score-set! prog score))
 
-(define (combine-programs p1 p2)
-  (define-values (g1 g2) (values (program-genes p1) (program-genes p2)))
-  ;; TEMP
-  (if (> (program-score p1) (program-score p2))
-      p1
-      p2)
-  )
+;; Combine 2 parent programs to form 2 children. Each parent has a random point
+;; chosen within it's bounds, and each half of the parent goes to one of the
+;; children.
+(define (combine-programs prog1 prog2)
+  (define-values (g1 g2) (values (program-genes prog1) (program-genes prog2)))
+  (define-values (p1 p2) (values (pseudo-random-integer (string-length g1))
+                                 (pseudo-random-integer (string-length g2))))
+  (define-values (c1 c2)
+    (values (make-program (string-append (substring g1 0 p1) (substring g2 p2)))
+            (make-program (string-append (substring g2 0 p2) (substring g1 p1)))))
+  (cons c1 c2))
 
 ;;(define (mutate-program prog)
 ;;  )
@@ -152,13 +157,16 @@
 (define (next-generation! pop data)
   ;; Select PARENT-COUNT parents from population.
   (define parents (select-parents/roulette pop PARENT-COUNT))
-  ;; Create children by combining each pair of 2 parents for a child.
-  (define children (make-vector CHILD-COUNT))
-  (do ((i 0 (1+ i)))
-      ((= i CHILD-COUNT))
-    (let ((child (combine-programs (vector-ref parents (2* i))
-                                   (vector-ref parents (1+ (2* i))))))
-      (vector-set! children i child)))
+  ;; Create children by combining each pair of 2 parents for 2 children.
+  (define children (make-vector PARENT-COUNT))
+  (do ((i 0 (2+ i)))
+      ((>= i PARENT-COUNT))
+    (let ((pair (combine-programs (vector-ref parents i)
+                                  (vector-ref parents (1+ i)))))
+      (score-program! (car pair) data)
+      (score-program! (cdr pair) data)
+      (vector-set! children i (car pair))
+      (vector-set! children (1+ i) (cdr pair))))
   ;; Replace least score programs in population with children.
   (do ((i 0 (1+ i)))
       ((= i CHILD-COUNT))
