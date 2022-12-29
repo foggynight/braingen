@@ -1,6 +1,7 @@
 (import (chicken format)
         (chicken io)
         (chicken process)
+        (chicken process-context)
         (chicken random)
         (chicken sort)
         (chicken string)
@@ -9,9 +10,27 @@
 ;; misc ------------------------------------------------------------------------
 
 (define (1+ n) (+ n 1))
+(define (1- n) (- n 1))
 (define (2+ n) (+ n 2))
 (define (2* n) (* n 2))
 (define // (compose inexact->exact floor /))
+
+;; string ----------------------------------------------------------------------
+
+(define (string-insert str i c)
+  (define left (substring str 0 i))
+  (define right (substring str i))
+  (string-append left (string c) right))
+
+(define (string-delete str i)
+  (define left (substring str 0 i))
+  (define right (substring str (1+ i)))
+  (string-append left right))
+
+(define (string-swap! str i j)
+  (define c (string-ref str i))
+  (string-set! str i (string-ref str j))
+  (string-set! str j c))
 
 ;; config ----------------------------------------------------------------------
 
@@ -25,6 +44,8 @@
 (define-constant TEMP-FILE-PATH "/tmp/braingen.bf")
 
 ;; brainfuck -------------------------------------------------------------------
+
+;; TODO: Detect infinite loop and die.
 
 ;; TODO: Write to output port instead of using `printf`.
 ;; Evaluate the Brainfuck program contained within the file at `path` given a
@@ -63,7 +84,7 @@
 (define-record-type program
   (%make-program genes score)
   program?
-  (genes program-genes)
+  (genes program-genes program-genes-set!)
   (score program-score program-score-set!))
 
 (define (make-program genes #!optional score)
@@ -101,13 +122,30 @@
   (define-values (g1 g2) (values (program-genes prog1) (program-genes prog2)))
   (define-values (p1 p2) (values (pseudo-random-integer (string-length g1))
                                  (pseudo-random-integer (string-length g2))))
-  (define-values (c1 c2)
-    (values (make-program (string-append (substring g1 0 p1) (substring g2 p2)))
-            (make-program (string-append (substring g2 0 p2) (substring g1 p1)))))
-  (cons c1 c2))
+  (list (make-program (string-append (substring g1 0 p1) (substring g2 p2)))
+        (make-program (string-append (substring g2 0 p2) (substring g1 p1)))))
 
-;;(define (mutate-program prog)
-;;  )
+(define (mutate-program! prog)
+  (define genes (program-genes prog))
+  (define len (string-length genes))
+  (define (add-cmd!)
+    (program-genes-set! prog
+                        (string-insert genes
+                                       (pseudo-random-integer len)
+                                       (random-bf-char))))
+  (define (del-cmd!)
+    (program-genes-set! prog (string-delete genes (pseudo-random-integer len))))
+  (define (swap-cmd!) (string-swap! genes
+                                    (pseudo-random-integer len)
+                                    (pseudo-random-integer len)))
+  (define (edit-cmd!) (string-set! genes
+                                   (pseudo-random-integer len)
+                                   (random-bf-char)))
+  (case (pseudo-random-integer 4)
+    ((0) (add-cmd!))
+    ((1) (unless (zero? len) (del-cmd!)))
+    ((2) (unless (< len 2) (swap-cmd!)))
+    ((3) (unless (zero? len) (edit-cmd!)))))
 
 ;; population ------------------------------------------------------------------
 
@@ -161,12 +199,12 @@
   (define children (make-vector PARENT-COUNT))
   (do ((i 0 (2+ i)))
       ((>= i PARENT-COUNT))
-    (let ((pair (combine-programs (vector-ref parents i)
-                                  (vector-ref parents (1+ i)))))
-      (score-program! (car pair) data)
-      (score-program! (cdr pair) data)
-      (vector-set! children i (car pair))
-      (vector-set! children (1+ i) (cdr pair))))
+    (let ((offspring (combine-programs (vector-ref parents i)
+                                       (vector-ref parents (1+ i)))))
+      (for-each mutate-program! offspring)
+      (for-each (lambda (c) (score-program! c data)) offspring)
+      (vector-set! children i (car offspring))
+      (vector-set! children (1+ i) (cadr offspring))))
   ;; Replace least score programs in population with children.
   (do ((i 0 (1+ i)))
       ((= i CHILD-COUNT))
@@ -190,3 +228,8 @@
                   (string-length (program-genes prime))
                   (program-genes prime))
           (begin (next-generation! pop data) (loop (1+ gen)))))))
+
+(let ((args (command-line-arguments)))
+  (if (= (length args) 1)
+      (main (car args))
+      (print "braingen: invalid arguments")))
