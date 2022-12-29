@@ -120,6 +120,9 @@
 (define (score-population! pop data)
   (vector-for-each (lambda (i p) (score-program! p data)) pop))
 
+(define (sort-population! pop)
+  (sort! pop (lambda (p1 p2) (> (program-score p1) (program-score p2)))))
+
 ;; Select `cnt` parents from `pop` using Roulette Wheel Selection.
 (define (select-parents/roulette pop cnt)
   (define len (vector-length pop))
@@ -167,8 +170,7 @@
       ((= i CHILD-COUNT))
     (vector-set! pop (+ i REPLACE-OFFSET)
                  (vector-ref children i)))
-  ;; Maintain sorted order of population.
-  (sort! pop (lambda (p1 p2) (> (program-score p1) (program-score p2)))))
+  (sort-population! pop))
 
 (define (main data-path #!optional seed)
   (set-pseudo-random-seed! (if seed seed (random-bytes)))
@@ -176,7 +178,7 @@
   (define data (read-data data-path))
   (define target-score (length data))
   (score-population! pop data)
-  (sort! pop (lambda (p1 p2) (> (program-score p1) (program-score p2))))
+  (sort-population! pop)
   (let loop ((gen 0))
     (printf "[~A]: ~A\n" gen pop)
     (let ((prime (vector-ref pop 0)))
