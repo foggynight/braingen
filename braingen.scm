@@ -12,9 +12,6 @@
 (define (2* n) (* n 2))
 (define // (compose inexact->exact floor /))
 
-(define string->vector (compose list->vector string->list))
-(define vector->string (compose list->string vector->list))
-
 ;; config ----------------------------------------------------------------------
 
 (define-constant POPULATION-SIZE 4)          ; Size of the population, remains constant.
@@ -59,9 +56,7 @@
 
 ;; program ---------------------------------------------------------------------
 
-;; TODO: Use strings instead of vectors to store genes?
-
-(define-constant BF-CHARS #(#\> #\< #\+ #\- #\[ #\] #\. #\,))
+(define-constant BF-CHARS "<>-+[],.")
 (define-constant BF-CHAR-CNT 8)
 
 (define-record-type program
@@ -74,20 +69,19 @@
   (%make-program genes score))
 
 (define-record-printer (program prog op)
-  (fprintf op "#<program ~A ~A>"
-           (program-score prog)
-           (vector->list (program-genes prog))))
+  (fprintf op "#<program ~A ~S>" (program-score prog) (program-genes prog)))
 
 (define (random-bf-char)
-  (vector-ref BF-CHARS (pseudo-random-integer BF-CHAR-CNT)))
+  (string-ref BF-CHARS (pseudo-random-integer BF-CHAR-CNT)))
 
 (define (random-program gene-len)
-  (define genes (vector-unfold (lambda (i) (random-bf-char)) gene-len))
+  (define genes (make-string gene-len))
+  (do ((i 0 (1+ i))) ((= i gene-len))
+    (string-set! genes i (random-bf-char)))
   (make-program genes))
 
 (define (score-program! prog data)
-  (define str (vector->string (program-genes prog)))
-  (with-output-to-file TEMP-FILE-PATH (lambda () (print str)))
+  (with-output-to-file TEMP-FILE-PATH (lambda () (print (program-genes prog))))
   (define score 1) ; 1 is minimum score.
   (let loop ((ds data))
     (unless (null? ds)
@@ -183,8 +177,8 @@
     (printf "[~A]: ~A\n" gen pop)
     (let ((prime (vector-ref pop 0)))
       (if (or (= gen MAX-GENERATIONS) (>= (program-score prime) target-score))
-          (printf "BEST PROGRAM (SCORE: ~A, LENGTH: ~A): ~A\n"
+          (printf "BEST PROGRAM (SCORE: ~A, LENGTH: ~A): ~S\n"
                   (program-score prime)
-                  (vector-length (program-genes prime))
-                  (vector->string (program-genes prime)))
+                  (string-length (program-genes prime))
+                  (program-genes prime))
           (begin (next-generation! pop data) (loop (1+ gen)))))))
