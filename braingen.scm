@@ -1,10 +1,13 @@
 (import (chicken format)
         (chicken io)
         (chicken process)
+        (chicken process signal)
         (chicken process-context)
         (chicken random)
         (chicken sort)
         (chicken string)
+        (chicken time)
+        simple-exceptions
         vector-lib)
 
 ;; misc ------------------------------------------------------------------------
@@ -34,38 +37,54 @@
 
 ;; config ----------------------------------------------------------------------
 
-(define-constant POPULATION-SIZE 4)          ; Size of the population, remains constant.
-(define-constant INIT-MAX-GENE-LEN 20)       ; Max size of the genes in the initial population.
+(define-constant POPULATION-SIZE 100)        ; Size of the population, remains constant.
+(define-constant INIT-MAX-GENE-LEN 80)       ; Max size of the genes in the initial population.
 (define PARENT-COUNT (// POPULATION-SIZE 2)) ; Number of parents selected each generation.
 (define CHILD-COUNT PARENT-COUNT)            ; Number of children spawned each generation.
 (define-constant MAX-GENERATIONS -1)         ; Maximum number of generations, -1 for infinite.
+
+(define-constant MAX-RUNTIME-SECS 2)         ; Max seconds Brainfuck programs are allowed to run.
 
 ;; Brainfuck programs are written to/read from this file.
 (define-constant TEMP-FILE-PATH "/tmp/braingen.bf")
 
 ;; brainfuck -------------------------------------------------------------------
 
-;; TODO: Detect infinite loop and die.
-
+;; TODO: Figure out a way to terminate without using `with-exn-handler`.
 ;; TODO: Write to output port instead of using `printf`.
 ;; Evaluate the Brainfuck program contained within the file at `path` given a
-;; list of numbers as `inputs`, each number is converted to a character and
-;; written to the input stream of the program.
-(define (brainfuck-eval path inputs)
-  (define input
-    (apply string-append (map (lambda (n)
-                                (string-append "\\x" (number->string n 16)))
-                              inputs)))
-  (define-values (ip op pid ep)
-    (process* (sprintf "printf '~A' | brainfuck ~A" input path)))
-  (let-values (((_ _ status) (process-wait pid)))
-    (let ((out (if (zero? status)
-                   (string->number (read-line ip) 16)
-                   #f)))
-      (close-input-port ip)
-      (close-output-port op)
-      (close-input-port ep)
-      out)))
+;; list of numbers as `inputs`. Each number is converted to a character and
+;; written to the input stream of the program. If evaluation was successful,
+;; returns the value of the accumulator as a number, otherwise returns false.
+(define (brainfuck-eval path inputs genes)
+  (printf "braingen: evaluating: ~A\r" inputs)
+  (with-exn-handler
+   (lambda (exn) (print (message exn)) #f)
+   (lambda ()
+     (define input
+       (apply string-append (map (lambda (n)
+                                   (string-append "\\x" (number->string n 16)))
+                                 inputs)))
+     (define start-time (current-seconds))
+     (define-values (ip op pid ep)
+       (process* (sprintf "printf '~A' | brainfuck ~A" input path)))
+     (define out
+       (let loop ((kill #f)) ; kill when over time
+         (if kill
+             (begin (printf "braingen: infinite loop detected: ~A\n" genes)
+                    (process-signal pid)
+                    #f)
+             (let-values (((pid _ status) (process-wait pid #t)))
+               (if (zero? pid) ; process has not terminated
+                   (loop (> (- (current-seconds) start-time)
+                            MAX-RUNTIME-SECS))
+                   (if (zero? status)
+                       (string->number (read-line ip) 16)
+                       #f))))))
+     (close-input-port ip)
+     (close-output-port op)
+     (close-input-port ep)
+     (lambda () out))))
 
 ;; data ------------------------------------------------------------------------
 
@@ -103,12 +122,13 @@
   (make-program genes))
 
 (define (score-program! prog data)
-  (with-output-to-file TEMP-FILE-PATH (lambda () (print (program-genes prog))))
+  (define genes (program-genes prog))
+  (with-output-to-file TEMP-FILE-PATH (lambda () (print genes)))
   (define score 1) ; 1 is minimum score.
   (let loop ((ds data))
     (unless (null? ds)
       (let* ((d (car ds))
-             (result (brainfuck-eval TEMP-FILE-PATH (cdr d))))
+             (result (brainfuck-eval TEMP-FILE-PATH (cdr d) genes)))
         (when result
           (when (= result (car d))
             (set! score (1+ score)))
@@ -194,14 +214,17 @@
 
 ;; main ------------------------------------------------------------------------
 
-;; Note: At all times, population is kept sorted by score descending.
+;; Note: At all times, population is kept sorted by score descending, equal
+;; score programs are sorted by gene length ascending.
 
 (define REPLACE-OFFSET (- POPULATION-SIZE CHILD-COUNT))
 
 (define (next-generation! pop data)
   ;; Select PARENT-COUNT parents from population.
+  (print "braingen: selecting parents...")
   (define parents (select-parents/roulette pop PARENT-COUNT))
   ;; Create children by combining each pair of 2 parents for 2 children.
+  (print "braingen: creating offspring...")
   (define children (make-vector PARENT-COUNT))
   (do ((i 0 (2+ i)))
       ((>= i PARENT-COUNT))
@@ -212,10 +235,12 @@
       (vector-set! children i (car offspring))
       (vector-set! children (1+ i) (cadr offspring))))
   ;; Replace least score programs in population with children.
+  (print "braingen: replacing with children...")
   (do ((i 0 (1+ i)))
       ((= i CHILD-COUNT))
     (vector-set! pop (+ i REPLACE-OFFSET)
                  (vector-ref children i)))
+  (print "braingen: sorting population...")
   (sort-population! pop))
 
 (define (main data-path #!optional seed)
@@ -223,7 +248,9 @@
   (define pop (random-population POPULATION-SIZE INIT-MAX-GENE-LEN))
   (define data (read-data data-path))
   (define target-score (length data))
+  (print "braingen: scoring population...")
   (score-population! pop data)
+  (print "braingen: sorting population...")
   (sort-population! pop)
   (let loop ((gen 0))
     (printf "[~A]: ~A\n" gen pop)
